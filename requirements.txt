@@ -1,0 +1,11 @@
+numpy
+scipy
+matplotlib
+seaborn
+tqdm
+python-doctr[torch]
+torch
+fastapi[standard]
+pillow
+uvicorn
+python-multipart
