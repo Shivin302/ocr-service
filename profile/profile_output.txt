@@ -1,0 +1,105 @@
+Time taken to do OCR: 172.403 seconds
+Wrote profile results to profile_ocr.py.lprof
+Timer unit: 0.01 s
+
+Total time: 171.373 s
+File: profile_ocr.py
+Function: all_forward at line 28
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    28                                           @profile
+    29                                           def all_forward(predictor, pages, **kwargs):
+    30                                               # Dimension check
+    31         1          0.0      0.0      0.0      if any(page.ndim != 3 for page in pages):
+    32                                                   raise ValueError("incorrect input shape: all pages are expected to be multi-channel 2D images.")
+    33                                           
+    34         1          0.0      0.0      0.0      origin_page_shapes = [page.shape[:2] if isinstance(page, np.ndarray) else page.shape[-2:] for page in pages]
+    35                                           
+    36                                               # Localize text elements
+    37         1       2576.9   2576.9     15.0      loc_preds, out_maps = predictor.det_predictor(pages, return_maps=True, **kwargs)
+    38                                           
+    39                                               # Detect document rotation and rotate pages
+    40                                               # seg_maps = [
+    41                                               #     np.where(out_map > getattr(predictor.det_predictor.model.postprocessor, "bin_thresh"), 255, 0).astype(np.uint8)
+    42                                               #     for out_map in out_maps
+    43                                               # ]
+    44                                           
+    45         1          6.0      6.0      0.0      out_maps_array = np.array(out_maps)
+    46         1          0.0      0.0      0.0      bin_thresh = getattr(predictor.det_predictor.model.postprocessor, "bin_thresh")
+    47         1         24.7     24.7      0.1      seg_maps_array = np.where(out_maps_array > bin_thresh, 255, 0).astype(np.uint8)
+    48         1          0.0      0.0      0.0      seg_maps = list(seg_maps_array)
+    49                                           
+    50                                           
+    51         1          0.0      0.0      0.0      if predictor.detect_orientation:
+    52                                                   general_pages_orientations, origin_pages_orientations = predictor._get_orientations(pages, seg_maps)
+    53                                                   orientations = [
+    54                                                       {"value": orientation_page, "confidence": None} for orientation_page in origin_pages_orientations
+    55                                                   ]
+    56                                               else:
+    57         1          0.0      0.0      0.0          orientations = None
+    58         1          0.0      0.0      0.0          general_pages_orientations = None
+    59         1          0.0      0.0      0.0          origin_pages_orientations = None
+    60         1          0.0      0.0      0.0      if predictor.straighten_pages:
+    61                                                   pages = predictor._straighten_pages(pages, seg_maps, general_pages_orientations, origin_pages_orientations)
+    62                                                   # update page shapes after straightening
+    63                                                   origin_page_shapes = [page.shape[:2] for page in pages]
+    64                                           
+    65                                                   # Forward again to get predictions on straight pages
+    66                                                   loc_preds = predictor.det_predictor(pages, **kwargs)
+    67                                           
+    68         1          0.0      0.0      0.0      assert all(len(loc_pred) == 1 for loc_pred in loc_preds), (
+    69                                                   "Detection Model in ocr_predictor should output only one class"
+    70                                               )
+    71                                           
+    72         1          0.0      0.0      0.0      loc_preds = [list(loc_pred.values())[0] for loc_pred in loc_preds]
+    73                                               # Detach objectness scores from loc_preds
+    74         1          0.0      0.0      0.0      loc_preds, objectness_scores = detach_scores(loc_preds)
+    75                                               # Check whether crop mode should be switched to channels first
+    76         1          0.0      0.0      0.0      channels_last = len(pages) == 0 or isinstance(pages[0], np.ndarray)
+    77                                           
+    78                                               # Apply hooks to loc_preds if any
+    79         1          0.0      0.0      0.0      for hook in predictor.hooks:
+    80                                                   loc_preds = hook(loc_preds)
+    81                                           
+    82                                               # Crop images
+    83         2         67.7     33.8      0.4      crops, loc_preds = predictor._prepare_crops(
+    84         1          0.0      0.0      0.0          pages,
+    85         1          0.0      0.0      0.0          loc_preds,
+    86         1          0.0      0.0      0.0          channels_last=channels_last,
+    87         1          0.0      0.0      0.0          assume_straight_pages=predictor.assume_straight_pages,
+    88         1          0.0      0.0      0.0          assume_horizontal=predictor._page_orientation_disabled,
+    89                                               )
+    90                                               # Rectify crop orientation and get crop orientation predictions
+    91         1          0.0      0.0      0.0      crop_orientations = []
+    92         1          0.0      0.0      0.0      if not predictor.assume_straight_pages:
+    93                                                   crops, loc_preds, _crop_orientations = predictor._rectify_crops(crops, loc_preds)
+    94                                                   crop_orientations = [
+    95                                                       {"value": orientation[0], "confidence": orientation[1]} for orientation in _crop_orientations
+    96                                                   ]
+    97                                           
+    98                                               # Identify character sequences
+    99         1      14239.4  14239.4     83.1      word_preds = predictor.reco_predictor([crop for page_crops in crops for crop in page_crops], **kwargs)
+   100         1          0.0      0.0      0.0      if not crop_orientations:
+   101         1          1.9      1.9      0.0          crop_orientations = [{"value": 0, "confidence": None} for _ in word_preds]
+   102                                           
+   103         1          0.1      0.1      0.0      boxes, text_preds, crop_orientations = predictor._process_predictions(loc_preds, word_preds, crop_orientations)
+   104                                           
+   105         1          0.0      0.0      0.0      if predictor.detect_language:
+   106                                                   languages = [get_language(" ".join([item[0] for item in text_pred])) for text_pred in text_preds]
+   107                                                   languages_dict = [{"value": lang[0], "confidence": lang[1]} for lang in languages]
+   108                                               else:
+   109         1          0.0      0.0      0.0          languages_dict = None
+   110                                           
+   111         2        220.5    110.3      1.3      out = predictor.doc_builder(
+   112         1          0.0      0.0      0.0          pages,
+   113         1          0.0      0.0      0.0          boxes,
+   114         1          0.0      0.0      0.0          objectness_scores,
+   115         1          0.0      0.0      0.0          text_preds,
+   116         1          0.0      0.0      0.0          origin_page_shapes,
+   117         1          0.0      0.0      0.0          crop_orientations,
+   118         1          0.0      0.0      0.0          orientations,
+   119         1          0.0      0.0      0.0          languages_dict,
+   120                                               )
+   121         1          0.0      0.0      0.0      return out
+

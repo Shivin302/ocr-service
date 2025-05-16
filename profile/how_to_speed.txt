@@ -1,0 +1,11 @@
+In profile_ocr we see detection takes 19% of runtime, recognition takes 79%. No point speeding up the other list operations
+
+
+Within Detection:
+Detection Predictor Pre-processor uses 11% of runtime, model forward uses 86% of runtime
+
+Model forward operates on (batch, channels, height, width) tensors of all the same size, can run torch.compile profiling compile triton kernels for speedups
+
+
+
+

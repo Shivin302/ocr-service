@@ -1,0 +1,46 @@
+Time taken to compile: 5.331 seconds
+Time taken to do OCR: 3.461 seconds
+Wrote profile results to run_det_predictor.py.lprof
+Timer unit: 0.01 s
+
+Total time: 3.35619 s
+File: run_det_predictor.py
+Function: all_forward at line 33
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    33                                           @profile
+    34                                           def all_forward(predictor, pages, return_maps=False, **kwargs):
+    35                                               # Extract parameters from the preprocessor
+    36         1          0.0      0.0      0.0      preserve_aspect_ratio = predictor.pre_processor.resize.preserve_aspect_ratio
+    37         1          0.0      0.0      0.0      symmetric_pad = predictor.pre_processor.resize.symmetric_pad
+    38         1          0.0      0.0      0.0      assume_straight_pages = predictor.model.assume_straight_pages
+    39                                           
+    40                                               # Dimension check
+    41         1          0.0      0.0      0.0      if any(page.ndim != 3 for page in pages):
+    42                                                   raise ValueError("incorrect input shape: all pages are expected to be multi-channel 2D images.")
+    43                                           
+    44         1         38.9     38.9     11.6      processed_batches = predictor.pre_processor(pages)
+    45         1          0.0      0.0      0.0      _params = next(predictor.model.parameters())
+    46         2          4.0      2.0      1.2      predictor.model, processed_batches = set_device_and_dtype(
+    47         1          0.0      0.0      0.0          predictor.model, processed_batches, _params.device, _params.dtype
+    48                                               )
+    49         2        291.4    145.7     86.8      predicted_batches = [
+    50         1          0.0      0.0      0.0          predictor.model(batch, return_preds=True, return_model_output=True, **kwargs) for batch in processed_batches
+    51                                               ]
+    52                                               # Remove padding from loc predictions
+    53         2          0.0      0.0      0.0      preds = _remove_padding(
+    54         1          0.0      0.0      0.0          pages,
+    55         1          0.0      0.0      0.0          [pred for batch in predicted_batches for pred in batch["preds"]],
+    56         1          0.0      0.0      0.0          preserve_aspect_ratio=preserve_aspect_ratio,
+    57         1          0.0      0.0      0.0          symmetric_pad=symmetric_pad,
+    58         1          0.0      0.0      0.0          assume_straight_pages=assume_straight_pages,  # type: ignore[arg-type]
+    59                                               )
+    60                                           
+    61         1          0.0      0.0      0.0      if return_maps:
+    62         2          1.2      0.6      0.4          seg_maps = [
+    63         1          0.0      0.0      0.0              pred.permute(1, 2, 0).detach().cpu().numpy() for batch in predicted_batches for pred in batch["out_map"]
+    64                                                   ]
+    65         1          0.0      0.0      0.0          return preds, seg_maps
+    66                                               return preds
+
