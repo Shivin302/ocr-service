@@ -44,19 +44,6 @@ async def process_image(session, image_path, semaphore):
             print(f"❌ Error processing {image_name}: {str(e)}")
             return None
 
-async def get_metrics(session):
-    """Get current API metrics"""
-    try:
-        async with session.get(METRICS_URL) as response:
-            if response.status == 200:
-                metrics = await response.json()
-                return metrics
-            else:
-                print(f"Failed to get metrics: {response.status}")
-                return {}
-    except Exception as e:
-        print(f"Error getting metrics: {str(e)}")
-        return {}
 
 async def traffic_sim(max_concurrent=5, num_images=20):
     """
@@ -88,14 +75,17 @@ async def traffic_sim(max_concurrent=5, num_images=20):
         # Execute all tasks with controlled concurrency
         results = await asyncio.gather(*tasks)
         results = [r for r in results if r is not None]  # Filter out failed requests
-        print("Done")
         # Get final metrics
-        final_metrics = await get_metrics(session)
-    print("Done2")
+        async with session.get(METRICS_URL) as response:
+            if response.status == 200:
+                metrics = await response.json()
+                final_metrics = metrics
+            else:
+                print(f"❌ Error getting metrics: Status {response.status}")
+                final_metrics = {}
 
     # Calculate statistics
     successful_requests = len(results)
-    print("Done3")
     total_time = time.time() - start_time
     avg_time = sum(r["total_time"] for r in results) / successful_requests if successful_requests > 0 else 0
     
@@ -104,7 +94,7 @@ async def traffic_sim(max_concurrent=5, num_images=20):
     print(f"Traffic Simulation Complete - {datetime.now().strftime('%H:%M:%S')}")
     print(f"Total time: {total_time:.2f} seconds")
     print(f"Successful requests: {successful_requests}/{len(images_to_process)}")
-    print(f"Average processing time: {avg_time:.2f} seconds")
+    print(f"Average processing time per semaphore: {avg_time:.2f} seconds")
     print("\nAPI Metrics:")
     
     print("Final metrics:")
@@ -115,7 +105,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='Async OCR Traffic Simulator')
-    parser.add_argument('--concurrent', type=int, default=5, help='Maximum concurrent requests')
+    parser.add_argument('--concurrent', type=int, default=16, help='Maximum concurrent requests')
     parser.add_argument('--images', type=int, default=20, help='Number of images to process')
     
     args = parser.parse_args()

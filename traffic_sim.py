@@ -27,7 +27,8 @@ def traffic_sim():
     end_time = time.time()
     print(f"Time taken to do OCR: {end_time - start_time:.3f} seconds")
 
-    response = requests.get(METRICS_URL)
+    metrics_params = {"reset": True}
+    response = requests.get(METRICS_URL, params=metrics_params)
     print(response.text)
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import sys
 import time
 import numpy as np
 import torch
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -15,13 +15,20 @@ from doctr.io import DocumentFile
 from doctr.models import ocr_predictor
 from collections import deque
 import threading
+import asyncio
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-predictor = ocr_predictor('db_resnet50', 'crnn_vgg16_bn', pretrained=True, det_bs=20, reco_bs=1024).to(device)
+ocr_models = []
+if torch.cuda.is_available():
+    num_devices = torch.cuda.device_count()
+    for i in range(num_devices):
+        device_i = torch.device(f"cuda:{i}")
+        predictor = ocr_predictor('db_resnet50', 'crnn_vgg16_bn', pretrained=True, det_bs=20, reco_bs=1024).to(device_i)
+        ocr_models.append(predictor)
+else:
+    raise RuntimeError("No GPU available")
 
 app = FastAPI(title="DocTR OCR API", description="API for OCR using docTR")
+
 
 class APIMetrics:
     def __init__(self):
@@ -37,10 +44,12 @@ class APIMetrics:
             self.active_requests += 1
             self.max_concurrent_requests = max(self.max_concurrent_requests, self.active_requests)
             self.request_times.append(time.time())
+            return self.active_requests  # Return current count for logging
     
     def end_request(self):
         with self.lock:
             self.active_requests -= 1
+            return self.active_requests  # Return current count for logging
     
     def get_request_interval(self):
         """Calculate average interval between requests in seconds"""
@@ -69,10 +78,33 @@ class APIMetrics:
 
 metrics = APIMetrics()
 
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    # Skip metrics tracking for metrics endpoint itself
+    if request.url.path == "/metrics":
+        return await call_next(request)
+    
+    # Start timing and tracking
+    active = metrics.start_request()
+    print(f"Request started - Active: {active} - Path: {request.url.path}")
+    
+    try:
+        # Process the request
+        response = await call_next(request)
+        return response
+    finally:
+        # Always end request tracking even if there was an exception
+        active = metrics.end_request()
+        print(f"Request completed - Active: {active} - Path: {request.url.path}")
 
-# class OCRResponse(BaseModel):
-#     text: str
-#     words: List[dict]
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def read_root():
@@ -96,7 +128,8 @@ def get_metrics(reset: bool = False):
 @app.post("/ocr")
 async def perform_ocr(file: UploadFile = File(...)):
     try:
-        metrics.start_request()
+        # Start timing the processing
+        # Note: The metrics.start_request() is now handled by the middleware
         start_time = time.time()
 
         contents = await file.read()
@@ -105,13 +138,15 @@ async def perform_ocr(file: UploadFile = File(...)):
         image_bytes = io.BytesIO(contents)
         
         doc = DocumentFile.from_images(contents)
+
+        random_gpu_id = np.random.randint(0, num_devices)
+        predictor = ocr_models[random_gpu_id]
+
         result = predictor(doc)
 
         end_time = time.time()
         request_time = round(end_time - start_time, 3)
-        # print(f"Time taken to do OCR: {request_time:.3f} seconds")
-
-        metrics.end_request()
+        
         return {"pred": result.export(), "request_time": request_time}
 
     except Exception as img_error:
